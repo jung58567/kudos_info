@@ -21,7 +21,7 @@
 <uri>model://sun</uri>
 </include>
 <include>
-<uri>model://kubot22_9</uri>
+<uri>model://B_kubot</uri>
 <pose frame=''>0 0 0.5 0 0 0</pose>
  <plugin name="kubot2_plugin" filename="libkubot22p_pkgs.so"/>
 </include>

@@ -19,7 +19,9 @@
 #include <std_msgs/Float64.h>
 #include <functional>
 #include <ignition/math/Vector3.hh>
-
+#include <Eigen/Dense>
+using Eigen::Matrix3d;
+using Eigen::Vector3d;
 
 #define PI      3.141592
 #define D2R     PI/180.
@@ -44,7 +46,7 @@ namespace gazebo //gazebo api사용하기 위해 namespace선언
         //*** Variables for kubot Simulation in Gazebo ***//
         //* TIME variable
         common::Time last_update_time;
-        event::ConnectionPtr update_connection;
+        event::ConnectionPtr update_connection; //ConnectionPtr 뭔가 연결해주는 포인터같은데 api검색해봐도 잘 안나오네
         double dt;
         double time = 0;
 
@@ -63,6 +65,10 @@ namespace gazebo //gazebo api사용하기 위해 namespace선언
         physics::JointPtr R_Knee_joint;
         physics::JointPtr R_Ankle_pitch_joint;
         physics::JointPtr R_Ankle_roll_joint;
+
+        sensors::SensorPtr Sensor;//imu data를 받기위한 포인터 선언
+        sensors::ImuSensorPtr IMU;
+        Vector3d IMU_theta;
 
         enum
         {//enum열거형을 사용해 각 모터별 번호를 부여한다.
@@ -98,6 +104,9 @@ namespace gazebo //gazebo api사용하기 위해 namespace선언
     void UpdateAlgorithm(); // Algorithm update while simulation
     void getJoints();  // Get each joint data from [physics::ModelPtr _model]
     void getjointData(); // Get encoder data of each joint
+    void jointcontroller();
+    void getsensor();
+    void getsensorData();
     };
     GZ_REGISTER_MODEL_PLUGIN(kubot2_plugin);//뭔진 잘 모르겠지만 필요한 함수라고 함
 }
@@ -107,6 +116,7 @@ void gazebo::kubot2_plugin::Load(physics::ModelPtr _model, sdf::ElementPtr /*_sd
 {
     model=_model;
     getJoints(); 
+    getsensor();
 
     nDoF = 12; // Get degrees of freedom, except position and orientation of the robot
     joint = new ROBO_JOINT[nDoF]; // Generation joint variables struct
@@ -131,10 +141,12 @@ void gazebo::kubot2_plugin::UpdateAlgorithm()
     last_update_time = current_time;
     //printf(C_RED "time = %f\n" C_MAGENTA,time);
     getjointData();
+    jointcontroller();
+    getsensorData();
 }
 
 
-void gazebo::kubot2_plugin::getJoints()
+void gazebo::kubot2_plugin::getJoints()//가제보로 연결된 모터 정보 연결
 {
     /*
      * Get each joints data from [physics::ModelPtr _model]
@@ -143,19 +155,19 @@ void gazebo::kubot2_plugin::getJoints()
     //* Joint specified in model.sdf
     
     //gazebo상에서 돌아가는 로봇의 관절정보를 
-    L_Hip_yaw_joint = this->model->GetJoint("LP");//sdf파일에 LP라는 관절의 정보를 L_Hip_yaw_joint라는 포인터를 통해 정보를 가르킴
-    L_Hip_roll_joint = this->model->GetJoint("LPm");
-    L_Hip_pitch_joint = this->model->GetJoint("LPd");
-    L_Knee_joint = this->model->GetJoint("LK");
-    L_Ankle_pitch_joint = this->model->GetJoint("LA");
-    L_Ankle_roll_joint = this->model->GetJoint("LF");
+    L_Hip_yaw_joint = this->model->GetJoint("L_Hip_yaw_joint");//sdf파일에 LP라는 관절의 정보를 L_Hip_yaw_joint라는 포인터를 통해 정보를 가르킴
+    L_Hip_roll_joint = this->model->GetJoint("L_Hip_roll_joint");
+    L_Hip_pitch_joint = this->model->GetJoint("L_Hip_pitch_joint");
+    L_Knee_joint = this->model->GetJoint("L_Knee_joint");
+    L_Ankle_pitch_joint = this->model->GetJoint("L_Ankle_pitch_joint");
+    L_Ankle_roll_joint = this->model->GetJoint("L_Ankle_roll_joint");
 
-    R_Hip_yaw_joint = this->model->GetJoint("RP");
-    R_Hip_roll_joint = this->model->GetJoint("RPm");
-    R_Hip_pitch_joint = this->model->GetJoint("RPd");
-    R_Knee_joint = this->model->GetJoint("RK");
-    R_Ankle_pitch_joint = this->model->GetJoint("RA");
-    R_Ankle_roll_joint = this->model->GetJoint("RF");
+    R_Hip_yaw_joint = this->model->GetJoint("R_Hip_yaw_joint");
+    R_Hip_roll_joint = this->model->GetJoint("R_Hip_roll_joint");
+    R_Hip_pitch_joint = this->model->GetJoint("R_Hip_pitch_joint");
+    R_Knee_joint = this->model->GetJoint("R_Knee_joint");
+    R_Ankle_pitch_joint = this->model->GetJoint("R_Ankle_pitch_joint");
+    R_Ankle_roll_joint = this->model->GetJoint("R_Ankle_roll_joint");
     
     //* FTsensor joint
     //LS = this->model->GetJoint("LS");
@@ -188,7 +200,7 @@ void gazebo::kubot2_plugin::getjointData()
 
     for (int j = 0; j < nDoF; j++) {
         joint[j].actualDegree = joint[j].actualRadian*R2D;
-        printf(C_BLUE "joint[%d].actualDegree = %f\n" C_RESET,j, joint[j].actualDegree);
+        //printf(C_BLUE "joint[%d].actualDegree = %f\n" C_RESET,j, joint[j].actualDegree);
     }
 
     //joint[WST].actualVelocity = Torso_yaw_joint->GetVelocity(0);
@@ -234,4 +246,55 @@ void gazebo::kubot2_plugin::getjointData()
     //     RoK.joint[j].currentAngle = joint[j].actualRadian;
     //     RoK.joint[j].currentVel = joint[j].actualVelocity;
     // }
+}
+
+void gazebo::kubot2_plugin::jointcontroller()
+{
+    double kp, kd;
+    double target_radian;
+    //target_radian = 90*D2R;
+    //target_velocity
+    
+    kp=10;
+    kd=0.1;
+    //joint[LKN].targetTorque=kp*(target_radian-joint[LKN].actualRadian)\
+    //                        +kd*(-joint[LKN].actualVelocity);
+    //단위는 N(뉴턴)이다
+    //L_Hip_yaw_joint->SetForce(1, joint[LHY].targetTorque);//z축이기 때문에 setforce(2)인거 같다.-> sdf파일에서 effort의 토크의 한계를 제한해서 안 돌아갔음
+    //sdf파일에서 limit joint의 한계를 정해줄 수 있음
+ 
+
+    target_radian=10;
+    // joint[LKN].targetTorque = target_radian;
+    // L_Knee_joint->SetForce(0, joint[LKN].targetTorque);
+
+    joint[LAP].targetTorque = target_radian;
+    L_Ankle_pitch_joint->SetForce(0, joint[LKN].targetTorque);
+}
+
+void gazebo::kubot2_plugin::getsensor()
+{
+    Sensor = sensors::get_sensor("IMU");
+    IMU = std::dynamic_pointer_cast<sensors::ImuSensor>(Sensor);
+}
+
+void gazebo::kubot2_plugin::getsensorData()
+{
+    // IMU_theta[Roll] = IMU->Orientation().Euler()[Roll];
+    // IMU_theta[Pitch] = IMU->Orientation().Euler()[Pitch];
+    // IMU_theta[Yaw] = IMU->Orientation().Euler()[Yaw];
+
+    IMU_theta[0] = IMU->Orientation().Euler()[0];
+    IMU_theta[1] = IMU->Orientation().Euler()[1];
+    IMU_theta[2] = IMU->Orientation().Euler()[2];
+    // IMU_dtheta[Roll] = IMU->AngularVelocity(false)[Roll];
+    // IMU_dtheta[Pitch] = IMU->AngularVelocity(false)[Pitch];
+    // IMU_dtheta[Yaw] = IMU->AngularVelocity(false)[Yaw];
+    
+    // printf("roll= %f\n",IMU_theta[0]*R2D);
+    // printf("pitch= %f\n",IMU_theta[1]*R2D);
+    // printf("yaw= %f\n",IMU_theta[2]*R2D);
+
+    //RoK.imu.theta = IMU_theta;
+    //RoK.imu.dtheta = IMU_dtheta;
 }

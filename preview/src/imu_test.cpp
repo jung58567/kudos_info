@@ -31,7 +31,8 @@ int main(int argc, char **argv)
         cout << "device is not opened! " << endl;
         return 0;
     }    
-
+//추가한 부분
+//추가한 부분2
     while(1)
     {
         imu.OnReceiveImu();
