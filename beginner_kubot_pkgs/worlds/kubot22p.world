@@ -23,7 +23,7 @@
 <include>
 <uri>model://B_kubot</uri>
 <pose frame=''>0 0 0.5 0 0 0</pose>
- <plugin name="kubot2_plugin" filename="libkubot22p_pkgs.so"/>
+ <plugin name="kubot2_plugin" filename="libbeginner_kubot_pkgs.so"/>
 </include>
 </world>
 </sdf>

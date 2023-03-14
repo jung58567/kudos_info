@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.0.2)
-project(kubot22p_pkgs)
+project(beginner_kubot_pkgs)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 add_compile_options(-std=c++11)
@@ -108,7 +108,7 @@ link_directories(${GAZEBO_LIBRARY_DIRS})
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
   INCLUDE_DIRS include
-  LIBRARIES kubot22p_pkgs
+  LIBRARIES beginner_kubot_pkgs
   CATKIN_DEPENDS gazebo_ros roscpp rospy std_msgs
 #  DEPENDS system_lib ##이건 풀어도 되고 안풀어도 되고
 )

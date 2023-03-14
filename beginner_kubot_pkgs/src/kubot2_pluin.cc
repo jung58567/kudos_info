@@ -66,6 +66,9 @@ namespace gazebo //gazebo api사용하기 위해 namespace선언
         physics::JointPtr R_Ankle_pitch_joint;
         physics::JointPtr R_Ankle_roll_joint;
 
+        // physics::JointPtr LS, RS;
+        // physics::JointWrench wrench;
+
         sensors::SensorPtr Sensor;//imu data를 받기위한 포인터 선언
         sensors::ImuSensorPtr IMU;
         Vector3d IMU_theta;
@@ -102,27 +105,34 @@ namespace gazebo //gazebo api사용하기 위해 namespace선언
     //*** Functions for kubot Simulation in Gazebo ***//
     void Load(physics::ModelPtr _model, sdf::ElementPtr /*_sdf*/); // Loading model data and initializing the system before simulation 
     void UpdateAlgorithm(); // Algorithm update while simulation
-    void getJoints();  // Get each joint data from [physics::ModelPtr _model]
-    void getjointData(); // Get encoder data of each joint
+
+    void setjoints();  // Get each joint data from [physics::ModelPtr _model]
+    void getjointdata(); // Get encoder data of each joint
     void jointcontroller();
-    void getsensor();
-    void getsensorData();
+    void setsensor();
+    void getsensordata();
+
+    void initialize_kubot();
+    void setjointPIDgain();
     };
     GZ_REGISTER_MODEL_PLUGIN(kubot2_plugin);//뭔진 잘 모르겠지만 필요한 함수라고 함
 }
 
-
+// Load 함수는 한번만 실행한다. Load함수에서 UpdateAlgorithm이라는 함수가 1ms 단위로 계속 업데이트 됨(실행됨)
+// 따라서 Load에는 초기화를 시키거나 모델파일을 불러오는 등 초기해 해줘야 되는 설정들을 넣어주고
+// UpdateAlgorithm()에는 
 void gazebo::kubot2_plugin::Load(physics::ModelPtr _model, sdf::ElementPtr /*_sdf*/)
 {
     model=_model;
-    getJoints(); 
-    getsensor();
-
+    setjoints(); 
+    setsensor();
+    
     nDoF = 12; // Get degrees of freedom, except position and orientation of the robot
     joint = new ROBO_JOINT[nDoF]; // Generation joint variables struct
     //new라는 건 동적할당이다. 동적할당이란 새로운 저장공간을 만들어준다는 의미
-    //joint라는 포인터에다 ROBO_JOINT라는 구조체를 12개 즉 모터의 개수만큼 만들어 준다는 의미인 듯
-
+    //joint라는 포인터에다 ROBO_JOINT라는 구조체를 12개 즉 모터의 개수만큼 만들어 준다는 의미
+    setjointPIDgain();
+    initialize_kubot();
     
     last_update_time = model->GetWorld()->SimTime();
     update_connection = event::Events::ConnectWorldUpdateBegin(boost::bind(&kubot2_plugin::UpdateAlgorithm, this));
@@ -132,21 +142,23 @@ void gazebo::kubot2_plugin::UpdateAlgorithm()
 {
     //* UPDATE TIME : 1ms
     common::Time current_time = model->GetWorld()->SimTime();
-    dt = current_time.Double() - last_update_time.Double();
+    dt = current_time.Double() - last_update_time.Double();//dt==1ms
     //    cout << "dt:" << dt << endl;
     time = time + dt;
     //    cout << "time:" << time << endl;
 
     //* setting for getting dt at next step
     last_update_time = current_time;
-    //printf(C_RED "time = %f\n" C_MAGENTA,time);
-    getjointData();
+    
+    //printf(C_RED "time = %f\n" C_MAGENTA,dt);
+    
+    getjointdata();
     jointcontroller();
-    getsensorData();
+    getsensordata();
 }
 
 
-void gazebo::kubot2_plugin::getJoints()//가제보로 연결된 모터 정보 연결
+void gazebo::kubot2_plugin::setjoints()//가제보로 연결된 모터 정보 연결
 {
     /*
      * Get each joints data from [physics::ModelPtr _model]
@@ -168,14 +180,14 @@ void gazebo::kubot2_plugin::getJoints()//가제보로 연결된 모터 정보 �
     R_Knee_joint = this->model->GetJoint("R_Knee_joint");
     R_Ankle_pitch_joint = this->model->GetJoint("R_Ankle_pitch_joint");
     R_Ankle_roll_joint = this->model->GetJoint("R_Ankle_roll_joint");
-    
+
     //* FTsensor joint
     //LS = this->model->GetJoint("LS");
     //RS = this->model->GetJoint("RS");
 }
 
 
-void gazebo::kubot2_plugin::getjointData()
+void gazebo::kubot2_plugin::getjointdata()
 {
     /*
      * Get encoder and velocity data of each joint[j].targetRadian = joint_h[j];
@@ -184,8 +196,8 @@ void gazebo::kubot2_plugin::getjointData()
      */
    // joint[WST].actualRadian = Torso_yaw_joint->Position(0);
 
-    joint[LHY].actualRadian = L_Hip_yaw_joint->Position(0);
-    joint[LHR].actualRadian = L_Hip_roll_joint->Position(0);
+    joint[LHY].actualRadian = L_Hip_yaw_joint->Position(0);//가제보 model파일에서 위치정보를 가져온다. 그걸 joint[i].actualRadian에 저장
+    joint[LHR].actualRadian = L_Hip_roll_joint->Position(0);//gazebo api참조(왠만한 모르는 변수나 함수는 이곳에 있음)
     joint[LHP].actualRadian = L_Hip_pitch_joint->Position(0);
     joint[LKN].actualRadian = L_Knee_joint->Position(0);
     joint[LAP].actualRadian = L_Ankle_pitch_joint->Position(0);
@@ -250,35 +262,45 @@ void gazebo::kubot2_plugin::getjointData()
 
 void gazebo::kubot2_plugin::jointcontroller()
 {
-    double kp, kd;
-    double target_radian;
-    //target_radian = 90*D2R;
-    //target_velocity
+   
+    static double pre_rad[12]={0};//static을 써주는 이유는 한번 초기화 한 이후로 바뀌지 않기 때문에
     
-    kp=10;
-    kd=0.1;
-    //joint[LKN].targetTorque=kp*(target_radian-joint[LKN].actualRadian)\
-    //                        +kd*(-joint[LKN].actualVelocity);
+    for (int i=0; i<nDoF; i++)
+    {
+        joint[i].targetVelocity = (joint[i].targetRadian - pre_rad[i]) / dt;
+        pre_rad[i] = joint[i].targetRadian;
+
+        joint[i].targetTorque = joint[i].Kp*(joint[i].targetRadian-joint[i].actualRadian)\
+                           +joint[i].Kd*(joint[i].targetVelocity-joint[i].actualVelocity);
+    //printf("targetvel[%d]= %f\n",i,joint[i].targetVelocity);
+    }
+
     //단위는 N(뉴턴)이다
     //L_Hip_yaw_joint->SetForce(1, joint[LHY].targetTorque);//z축이기 때문에 setforce(2)인거 같다.-> sdf파일에서 effort의 토크의 한계를 제한해서 안 돌아갔음
     //sdf파일에서 limit joint의 한계를 정해줄 수 있음
- 
+     
+    L_Hip_yaw_joint->SetForce(0, joint[LHY].targetTorque);//위에서 구한 targetTorque(힘)을 실제 가제보상의 모터에 넣어줌
+    L_Hip_roll_joint->SetForce(0, joint[LHR].targetTorque);
+    L_Hip_pitch_joint->SetForce(0, joint[LHP].targetTorque);
+    L_Knee_joint->SetForce(0, joint[LKN].targetTorque);
+    L_Ankle_pitch_joint->SetForce(0, joint[LAP].targetTorque);
+    L_Ankle_roll_joint->SetForce(0, joint[LAR].targetTorque);
+    R_Hip_yaw_joint->SetForce(0, joint[RHY].targetTorque);
+    R_Hip_roll_joint->SetForce(0, joint[RHR].targetTorque);
+    R_Hip_pitch_joint->SetForce(0, joint[RHP].targetTorque);
+    R_Knee_joint->SetForce(0, joint[RKN].targetTorque);
+    R_Ankle_pitch_joint->SetForce(0, joint[RAP].targetTorque);
+    R_Ankle_roll_joint->SetForce(0, joint[RAR].targetTorque);
 
-    target_radian=10;
-    // joint[LKN].targetTorque = target_radian;
-    // L_Knee_joint->SetForce(0, joint[LKN].targetTorque);
-
-    joint[LAP].targetTorque = target_radian;
-    L_Ankle_pitch_joint->SetForce(0, joint[LKN].targetTorque);
 }
 
-void gazebo::kubot2_plugin::getsensor()
+void gazebo::kubot2_plugin::setsensor()
 {
     Sensor = sensors::get_sensor("IMU");
     IMU = std::dynamic_pointer_cast<sensors::ImuSensor>(Sensor);
 }
 
-void gazebo::kubot2_plugin::getsensorData()
+void gazebo::kubot2_plugin::getsensordata()
 {
     // IMU_theta[Roll] = IMU->Orientation().Euler()[Roll];
     // IMU_theta[Pitch] = IMU->Orientation().Euler()[Pitch];
@@ -297,4 +319,54 @@ void gazebo::kubot2_plugin::getsensorData()
 
     //RoK.imu.theta = IMU_theta;
     //RoK.imu.dtheta = IMU_dtheta;
+}
+
+void gazebo::kubot2_plugin::initialize_kubot()
+{
+    //로봇 초기 자세 encoder값
+    joint[LHY].targetRadian=0*D2R;
+    joint[LHR].targetRadian=0*D2R;
+    joint[LHP].targetRadian=-45*D2R;
+    joint[LKN].targetRadian=90*D2R;
+    joint[LAP].targetRadian=-45*D2R;
+    joint[LAR].targetRadian=0*D2R;
+    joint[RHY].targetRadian=0*D2R;
+    joint[RHR].targetRadian=0*D2R;
+    joint[RHP].targetRadian=-45*D2R;
+    joint[RKN].targetRadian=90*D2R;
+    joint[RAP].targetRadian=-45*D2R;
+    joint[RAR].targetRadian=0*D2R;
+}
+
+void gazebo::kubot2_plugin::setjointPIDgain()
+{
+    //set P_gain,D_gain
+    joint[LHY].Kp = 10;
+    joint[LHR].Kp = 10;
+    joint[LHP].Kp = 10;
+    joint[LKN].Kp = 10;
+    joint[LAP].Kp = 10;
+    joint[LAR].Kp = 10;
+
+    joint[RHY].Kp = joint[LHY].Kp;
+    joint[RHR].Kp = joint[LHR].Kp;
+    joint[RHP].Kp = joint[LHP].Kp;
+    joint[RKN].Kp = joint[LKN].Kp;
+    joint[RAP].Kp = joint[LAP].Kp;
+    joint[RAR].Kp = joint[LAR].Kp;
+
+    joint[LHY].Kd =   0.1;
+    joint[LHR].Kd =   0.1;
+    joint[LHP].Kd =   0.1;
+    joint[LKN].Kd =   0.1;
+    joint[LAP].Kd =   0.1;
+    joint[LAR].Kd =   0.1;
+
+    joint[RHY].Kd = joint[LHY].Kd;
+    joint[RHR].Kd = joint[LHR].Kd;
+    joint[RHP].Kd = joint[LHP].Kd;
+    joint[RKN].Kd = joint[LKN].Kd;
+    joint[RAP].Kd = joint[LAP].Kd;
+    joint[RAR].Kd = joint[LAR].Kd;
+
 }
