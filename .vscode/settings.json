@@ -73,6 +73,8 @@
         "bit": "cpp",
         "*.ipp": "cpp",
         "dense": "cpp",
-        "*.txx": "cpp"
+        "*.txx": "cpp",
+        "nonlinearoptimization": "cpp",
+        "polynomials": "cpp"
     }
 }
